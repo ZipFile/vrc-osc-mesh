@@ -1,6 +1,8 @@
 package room
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -8,58 +10,42 @@ import (
 
 type UserID string
 type RoomID uuid.UUID
-type JoinRequestID uuid.UUID
 type InviteID uuid.UUID
+type InviteDirection int
+
+const (
+	FromUser InviteDirection = iota
+	ToUser
+)
+
+var ErrNotFound = errors.New("not found")
+var ErrInviteNotFound = fmt.Errorf("invite not found: %w", ErrNotFound)
+var ErrRequestNotFound = fmt.Errorf("request not found: %w", ErrNotFound)
+var ErrAlreadyMember = errors.New("user is already a member of the room")
+var ErrAlreadyRequested = errors.New("user already requested to join the room")
+var ErrAlreadyInvited = errors.New("user already invited to the room")
 
 type Member struct {
 	UserID UserID `json:"user_id"`
 	Name   string `json:"name"`
 }
 
-type JoinRequest struct {
-	ID        JoinRequestID `json:"id"`
-	To        UserID        `json:"to"`
-	From      UserID        `json:"from"`
-	CreatedAt time.Time     `json:"created_at"`
-}
-
 type Invite struct {
-	ID        InviteID  `json:"id"`
-	To        UserID    `json:"to"`
-	From      UserID    `json:"from"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        InviteID        `json:"id"`
+	Name      string          `json:"name"`
+	UserID    UserID          `json:"user_id"`
+	Direction InviteDirection `json:"direction"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
 type Room struct {
-	ID           RoomID        `json:"id"`
-	MasterID     UserID        `json:"master_id"`
-	Name         string        `json:"name"`
-	LastActivity time.Time     `json:"last_activity"`
-	CreatedAt    time.Time     `json:"created_at"`
-	Members      []Member      `json:"members"`
-	Invites      []Invite      `json:"invites"`
-	Requests     []JoinRequest `json:"requests"`
-}
-
-func (r *Room) Copy() *Room {
-	if r == nil {
-		return nil
-	}
-
-	members := make([]Member, len(r.Members))
-	invites := make([]Invite, len(r.Invites))
-	requsts := make([]JoinRequest, len(r.Requests))
-
-	copy(members, r.Members)
-	copy(invites, r.Invites)
-	copy(requsts, r.Requests)
-
-	c := *r
-	c.Invites = invites
-	c.Members = members
-	c.Requests = requsts
-
-	return &c
+	ID           RoomID    `json:"id"`
+	MasterID     UserID    `json:"master_id"`
+	Name         string    `json:"name"`
+	LastActivity time.Time `json:"last_activity"`
+	CreatedAt    time.Time `json:"created_at"`
+	Members      []Member  `json:"members"`
+	Invites      []Invite  `json:"invites"`
 }
 
 type Repository interface {

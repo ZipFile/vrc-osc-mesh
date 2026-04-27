@@ -82,7 +82,6 @@ func (rr *Repository) ListForUser(id room.UserID) ([]room.Room, error) {
 	var rooms []room.Room
 	var m room.Member
 	var i room.Invite
-	var j room.JoinRequest
 	var r *room.Room
 
 	for _, r = range rr.rooms {
@@ -95,16 +94,10 @@ func (rr *Repository) ListForUser(id room.UserID) ([]room.Room, error) {
 			}
 		}
 		for _, i = range r.Invites {
-			if i.To == id {
+			if i.UserID == id {
 				goto match
 			}
 		}
-		for _, j = range r.Requests {
-			if j.From == id {
-				goto match
-			}
-		}
-
 		continue
 
 	match:

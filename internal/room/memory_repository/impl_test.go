@@ -23,7 +23,6 @@ func TestRepository_AddGetDelete(t *testing.T) {
 	repo := New()
 	roomID := room.RoomID(uuid.New())
 	inviteID := room.InviteID(uuid.New())
-	joinRequestID := room.JoinRequestID(uuid.New())
 
 	r := room.Room{
 		ID:           roomID,
@@ -35,10 +34,8 @@ func TestRepository_AddGetDelete(t *testing.T) {
 			{UserID: "test", Name: "test"},
 		},
 		Invites: []room.Invite{
-			{ID: inviteID, To: "test", From: "test"},
-		},
-		Requests: []room.JoinRequest{
-			{ID: joinRequestID, To: "test", From: "test"},
+			{ID: inviteID, UserID: "test", Direction: room.ToUser, Name: "test", CreatedAt: testDate},
+			{ID: inviteID, UserID: "test", Direction: room.FromUser, Name: "test", CreatedAt: testDate},
 		},
 	}
 
@@ -50,8 +47,8 @@ func TestRepository_AddGetDelete(t *testing.T) {
 	r.Name = "modified"
 	r.LastActivity = testDate
 	r.CreatedAt = testDate
-	r.Invites[0].From = "modified"
-	r.Requests[0].From = "modified"
+	r.Invites[0].UserID = "modified"
+	r.Invites[1].UserID = "modified"
 	r.Members = []room.Member{
 		{UserID: "modified", Name: "modified"},
 	}
@@ -109,7 +106,6 @@ func TestRepository_ListForUser(t *testing.T) {
 	var err error
 	repo := New()
 	userID := room.UserID(uuid.New().String())
-	otherUserID := room.UserID(uuid.New().String())
 
 	rooms := []room.Room{
 		{
@@ -120,19 +116,6 @@ func TestRepository_ListForUser(t *testing.T) {
 			CreatedAt:    testDate,
 			Members:      make([]room.Member, 0),
 			Invites:      make([]room.Invite, 0),
-			Requests:     make([]room.JoinRequest, 0),
-		},
-		{
-			ID:           room.RoomID(uuid.New()),
-			MasterID:     room.UserID(uuid.New().String()),
-			Name:         "requested",
-			LastActivity: testDate.Add(2 * time.Second),
-			CreatedAt:    testDate,
-			Members:      make([]room.Member, 0),
-			Invites:      make([]room.Invite, 0),
-			Requests: []room.JoinRequest{
-				{ID: room.JoinRequestID(uuid.New()), To: otherUserID, From: userID, CreatedAt: testDate},
-			},
 		},
 		{
 			ID:           room.RoomID(uuid.New()),
@@ -142,9 +125,14 @@ func TestRepository_ListForUser(t *testing.T) {
 			CreatedAt:    testDate,
 			Members:      make([]room.Member, 0),
 			Invites: []room.Invite{
-				{ID: room.InviteID(uuid.New()), To: userID, From: otherUserID, CreatedAt: testDate},
+				{
+					ID:        room.InviteID(uuid.New()),
+					UserID:    userID,
+					Name:      "test",
+					Direction: room.ToUser,
+					CreatedAt: testDate,
+				},
 			},
-			Requests: make([]room.JoinRequest, 0),
 		},
 		{
 			ID:           room.RoomID(uuid.New()),
@@ -155,8 +143,7 @@ func TestRepository_ListForUser(t *testing.T) {
 			Members: []room.Member{
 				{UserID: userID, Name: "test"},
 			},
-			Invites:  make([]room.Invite, 0),
-			Requests: make([]room.JoinRequest, 0),
+			Invites: make([]room.Invite, 0),
 		},
 		{
 			ID:           room.RoomID(uuid.New()),
@@ -168,10 +155,13 @@ func TestRepository_ListForUser(t *testing.T) {
 				{UserID: "test", Name: "test"},
 			},
 			Invites: []room.Invite{
-				{ID: room.InviteID(uuid.New()), To: "test", From: "test", CreatedAt: testDate},
-			},
-			Requests: []room.JoinRequest{
-				{ID: room.JoinRequestID(uuid.New()), To: "test", From: "test", CreatedAt: testDate},
+				{
+					ID:        room.InviteID(uuid.New()),
+					UserID:    "test",
+					Name:      "test",
+					Direction: room.ToUser,
+					CreatedAt: testDate,
+				},
 			},
 		},
 	}
@@ -184,7 +174,7 @@ func TestRepository_ListForUser(t *testing.T) {
 	storedRooms, err := repo.ListForUser(userID)
 
 	require.NoError(t, err)
-	require.Equal(t, 4, len(storedRooms))
+	require.Equal(t, 3, len(storedRooms))
 
 	sort.Slice(storedRooms, func(i, j int) bool {
 		return storedRooms[i].LastActivity.Before(storedRooms[j].LastActivity)
