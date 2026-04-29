@@ -1,6 +1,7 @@
 package memory_room_repository
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -8,16 +9,19 @@ import (
 )
 
 type Repository struct {
-	rooms map[room.RoomID]*room.Room
-	mu    sync.RWMutex
-	now   func() time.Time
+	rooms     map[room.RoomID]*room.Room
+	locks     map[room.RoomID]*sync.Mutex
+	mu        sync.RWMutex
+	now       func() time.Time
+	Error     error
+	LockError error
 }
 
 var _ room.Repository = (*Repository)(nil)
 
 type Option func(*Repository)
 
-func WithNow(now func() time.Time) Option {
+func WithNowFunc(now func() time.Time) Option {
 	return func(rr *Repository) {
 		rr.now = now
 	}
@@ -26,6 +30,7 @@ func WithNow(now func() time.Time) Option {
 func New(options ...Option) *Repository {
 	r := &Repository{
 		rooms: make(map[room.RoomID]*room.Room),
+		locks: make(map[room.RoomID]*sync.Mutex),
 		now:   time.Now,
 	}
 
@@ -36,29 +41,51 @@ func New(options ...Option) *Repository {
 	return r
 }
 
-func (rr *Repository) Add(r room.Room) error {
+func (rr *Repository) Add(_ context.Context, r room.Room) error {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
+
+	if rr.Error != nil {
+		return rr.Error
+	}
+
 	rr.rooms[r.ID] = r.Copy()
+	rr.locks[r.ID] = &sync.Mutex{}
 	return nil
 }
 
-func (rr *Repository) Get(id room.RoomID) (*room.Room, error) {
+func (rr *Repository) Get(_ context.Context, id room.RoomID) (*room.Room, error) {
 	rr.mu.RLock()
 	defer rr.mu.RUnlock()
+
+	if rr.Error != nil {
+		return nil, rr.Error
+	}
+
 	return rr.rooms[id].Copy(), nil
 }
 
-func (rr *Repository) Delete(id room.RoomID) error {
+func (rr *Repository) Delete(_ context.Context, id room.RoomID) error {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
+
+	if rr.Error != nil {
+		return rr.Error
+	}
+
 	delete(rr.rooms, id)
+	delete(rr.locks, id)
+
 	return nil
 }
 
-func (rr *Repository) ListExpired(ttl time.Duration) ([]room.RoomID, error) {
+func (rr *Repository) ListExpired(_ context.Context, ttl time.Duration) ([]room.RoomID, error) {
 	rr.mu.Lock()
 	defer rr.mu.Unlock()
+
+	if rr.Error != nil {
+		return nil, rr.Error
+	}
 
 	deadline := rr.now().Add(-ttl)
 	toDelete := make([]room.RoomID, 0)
@@ -76,11 +103,16 @@ func (rr *Repository) ListExpired(ttl time.Duration) ([]room.RoomID, error) {
 	return toDelete, nil
 }
 
-func (rr *Repository) ListForUser(id room.UserID) ([]room.Room, error) {
+func (rr *Repository) ListForUser(_ context.Context, id room.UserID) ([]room.Room, error) {
 	rr.mu.RLock()
 	defer rr.mu.RUnlock()
+
+	if rr.Error != nil {
+		return nil, rr.Error
+	}
+
 	var rooms []room.Room
-	var m room.Member
+	var m room.User
 	var i room.Invite
 	var r *room.Room
 
@@ -89,7 +121,7 @@ func (rr *Repository) ListForUser(id room.UserID) ([]room.Room, error) {
 			goto match
 		}
 		for _, m = range r.Members {
-			if m.UserID == id {
+			if m.ID == id {
 				goto match
 			}
 		}
@@ -105,4 +137,25 @@ func (rr *Repository) ListForUser(id room.UserID) ([]room.Room, error) {
 	}
 
 	return rooms, nil
+}
+
+func (rr *Repository) Lock(ctx context.Context, id room.RoomID, fn func(context.Context, *room.Room) error) error {
+	rr.mu.RLock()
+
+	if rr.LockError != nil {
+		rr.mu.RUnlock()
+		return rr.LockError
+	}
+
+	mu, ok := rr.locks[id]
+	rr.mu.RUnlock()
+
+	if !ok {
+		return room.ErrRoomNotFound
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	return fn(ctx, rr.rooms[id].Copy())
 }

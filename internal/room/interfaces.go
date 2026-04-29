@@ -1,16 +1,15 @@
 package room
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 type UserID string
-type RoomID uuid.UUID
-type InviteID uuid.UUID
+type RoomID string
+type InviteID string
 type InviteDirection int
 
 const (
@@ -19,15 +18,14 @@ const (
 )
 
 var ErrNotFound = errors.New("not found")
+var ErrRoomNotFound = fmt.Errorf("room not found: %w", ErrNotFound)
 var ErrInviteNotFound = fmt.Errorf("invite not found: %w", ErrNotFound)
-var ErrRequestNotFound = fmt.Errorf("request not found: %w", ErrNotFound)
 var ErrAlreadyMember = errors.New("user is already a member of the room")
-var ErrAlreadyRequested = errors.New("user already requested to join the room")
 var ErrAlreadyInvited = errors.New("user already invited to the room")
 
-type Member struct {
-	UserID UserID `json:"user_id"`
-	Name   string `json:"name"`
+type User struct {
+	ID   UserID `json:"id"`
+	Name string `json:"name"`
 }
 
 type Invite struct {
@@ -44,14 +42,26 @@ type Room struct {
 	Name         string    `json:"name"`
 	LastActivity time.Time `json:"last_activity"`
 	CreatedAt    time.Time `json:"created_at"`
-	Members      []Member  `json:"members"`
+	Members      []User    `json:"members"`
 	Invites      []Invite  `json:"invites"`
 }
 
 type Repository interface {
-	Add(Room) error
-	Get(RoomID) (*Room, error)
-	Delete(RoomID) error
-	ListExpired(ttl time.Duration) ([]RoomID, error)
-	ListForUser(id UserID) ([]Room, error)
+	Add(context.Context, Room) error
+	Get(context.Context, RoomID) (*Room, error)
+	Delete(context.Context, RoomID) error
+	ListExpired(ctx context.Context, ttl time.Duration) ([]RoomID, error)
+	ListForUser(ctx context.Context, id UserID) ([]Room, error)
+	Lock(context.Context, RoomID, func(context.Context, *Room) error) error
+}
+
+type Service interface {
+	CreateRoom(ctx context.Context, master User, name string) (*Room, error)
+	DestroyRoom(context.Context, RoomID) error
+	RequestRoomJoin(context.Context, User, RoomID) (*Room, bool, error)
+	SendInvite(context.Context, RoomID, User) (*Room, bool, error)
+	AcceptInvite(context.Context, RoomID, InviteID) (*Room, error)
+	RejectInvite(context.Context, RoomID, InviteID) (*Room, error)
+	RemoveUser(context.Context, RoomID, UserID) (*Room, error)
+	ChangeMaster(context.Context, RoomID, UserID) (*Room, error)
 }

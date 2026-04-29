@@ -10,15 +10,15 @@ import (
 
 func TestInvite_Member(t *testing.T) {
 	invite := Invite{
-		ID:        InviteID(uuid.New()),
+		ID:        InviteID(uuid.New().String()),
 		UserID:    UserID(uuid.New().String()),
 		Name:      "test",
 		Direction: FromUser,
 		CreatedAt: time.Now(),
 	}
-	expected := Member{
-		UserID: invite.UserID,
-		Name:   invite.Name,
+	expected := User{
+		ID:   invite.UserID,
+		Name: invite.Name,
 	}
 
 	require.Equal(t, expected, invite.Member())
@@ -27,7 +27,7 @@ func TestInvite_Member(t *testing.T) {
 func TestRoom_Invites(t *testing.T) {
 	now := time.Now()
 	invite := Invite{
-		ID:        InviteID(uuid.New()),
+		ID:        InviteID(uuid.New().String()),
 		UserID:    UserID(uuid.New().String()),
 		Name:      "test",
 		Direction: ToUser,
@@ -37,26 +37,29 @@ func TestRoom_Invites(t *testing.T) {
 
 	require.False(t, room.IsInvited(invite.UserID))
 
-	err := room.AddInvite(invite, now)
+	joined, err := room.AddInvite(invite, now)
 
 	require.NoError(t, err)
+	require.False(t, joined)
 	require.True(t, room.IsInvited(invite.UserID))
 
-	err = room.AddInvite(invite, now)
+	joined, err = room.AddInvite(invite, now)
 
 	require.ErrorIs(t, err, ErrAlreadyInvited)
+	require.False(t, joined)
 
 	t.Run("accept", func(t *testing.T) {
 		roomCopy := room.Copy()
-		err := roomCopy.AcceptInvite(invite.ID, now)
+		err = roomCopy.AcceptInvite(invite.ID, now)
 
 		require.NoError(t, err)
 		require.False(t, roomCopy.IsInvited(invite.UserID))
 		require.True(t, roomCopy.IsMember(invite.UserID))
 
-		err = roomCopy.AddInvite(invite, now)
+		joined, err = roomCopy.AddInvite(invite, now)
 
 		require.ErrorIs(t, err, ErrAlreadyMember)
+		require.False(t, joined)
 
 		err = roomCopy.AcceptInvite(invite.ID, now)
 
@@ -81,27 +84,29 @@ func TestRoom_Invite_PendingJoinRequest(t *testing.T) {
 	now := time.Now()
 	userID := UserID(uuid.New().String())
 	invite := Invite{
-		ID:        InviteID(uuid.New()),
+		ID:        InviteID(uuid.New().String()),
 		UserID:    userID,
 		Direction: FromUser,
 		Name:      "test",
 		CreatedAt: now,
 	}
 	request := Invite{
-		ID:        InviteID(uuid.New()),
+		ID:        InviteID(uuid.New().String()),
 		UserID:    userID,
 		Direction: ToUser,
 		Name:      "tset",
 		CreatedAt: now,
 	}
 	room := Room{}
-	err := room.AddInvite(request, now)
+	joined, err := room.AddInvite(request, now)
 
 	require.NoError(t, err)
+	require.False(t, joined)
 
-	err = room.AddInvite(invite, now)
+	joined, err = room.AddInvite(invite, now)
 
 	require.NoError(t, err)
+	require.True(t, joined)
 	require.False(t, room.IsRequested(userID))
 	require.False(t, room.IsInvited(userID))
 	require.True(t, room.IsMember(userID))
@@ -109,7 +114,7 @@ func TestRoom_Invite_PendingJoinRequest(t *testing.T) {
 
 func TestInvite_IsJoinRequest(t *testing.T) {
 	invite := Invite{
-		ID:        InviteID(uuid.New()),
+		ID:        InviteID(uuid.New().String()),
 		UserID:    UserID(uuid.New().String()),
 		Name:      "test",
 		Direction: FromUser,

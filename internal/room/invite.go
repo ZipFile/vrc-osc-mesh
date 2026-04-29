@@ -5,33 +5,35 @@ import (
 	"time"
 )
 
-func (i *Invite) Member() Member {
-	return Member{UserID: i.UserID, Name: i.Name}
+func (i *Invite) Member() User {
+	return User{ID: i.UserID, Name: i.Name}
 }
 
 func (i *Invite) IsJoinRequest() bool {
 	return i.Direction == FromUser
 }
 
-func (r *Room) AddInvite(i Invite, now time.Time) error {
-	if r.IsMember(i.UserID) {
-		return ErrAlreadyMember
+func (r *Room) AddInvite(inv Invite, now time.Time) (bool, error) {
+	if r.IsMember(inv.UserID) {
+		return false, ErrAlreadyMember
 	}
 
-	for _, invite := range r.Invites {
-		if invite.UserID == i.UserID {
-			if invite.Direction == i.Direction {
-				return ErrAlreadyInvited
+	for i := range r.Invites {
+		if r.Invites[i].UserID == inv.UserID {
+			if r.Invites[i].Direction == inv.Direction {
+				return false, ErrAlreadyInvited
 			}
 
-			return r.AddMember(i.Member(), now)
+			r.addMember(inv.Member(), now) // updates r.Invites
+
+			return true, nil
 		}
 	}
 
 	r.LastActivity = now
-	r.Invites = append(r.Invites, i)
+	r.Invites = append(r.Invites, inv)
 
-	return nil
+	return false, nil
 }
 
 func (r *Room) isInvited(id UserID, direction InviteDirection) bool {
