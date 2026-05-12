@@ -25,6 +25,8 @@ var ErrAlreadyMember = errors.New("user is already a member of the room")
 var ErrAlreadyInvited = errors.New("user already invited to the room")
 var ErrAlreadyMaster = errors.New("user is already the master of the room")
 var ErrCannotRemoveMaster = errors.New("cannot remove master user from room")
+var ErrNotMaster = errors.New("user is not the master of the room")
+var ErrInviteNotAcceptable = errors.New("invite is not acceptable")
 
 type User struct {
 	ID   UserID `json:"id"`
@@ -59,9 +61,9 @@ type Repository interface {
 }
 
 type Service interface {
-	CreateRoom(ctx context.Context, master User, name string) (*Room, error)
+	CreateRoom(context.Context, string) (*Room, error)
 	DestroyRoom(context.Context, RoomID) error
-	RequestRoomJoin(context.Context, User, RoomID) (*Room, bool, error)
+	RequestRoomJoin(context.Context, RoomID) (*Room, bool, error)
 	SendInvite(context.Context, RoomID, User) (*Room, bool, error)
 	AcceptInvite(context.Context, RoomID, InviteID) (*Room, error)
 	RejectInvite(context.Context, RoomID, InviteID) (*Room, error)

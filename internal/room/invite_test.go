@@ -8,6 +8,54 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestInvite_IsAcceptable(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var invite *Invite
+		require.False(t, invite.IsAcceptable("", ""))
+		require.False(t, invite.IsRejectable("", ""))
+	})
+
+	master := User{ID: "master", Name: "master"}
+	user := User{ID: "user", Name: "user"}
+	invite := Invite{
+		ID:        InviteID(uuid.New().String()),
+		UserID:    user.ID,
+		Name:      "test",
+		Direction: FromUser,
+		CreatedAt: time.Now(),
+	}
+
+	require.True(t, invite.IsAcceptable(master.ID, master.ID))
+	require.False(t, invite.IsAcceptable(user.ID, master.ID))
+	require.False(t, invite.IsAcceptable("random", master.ID))
+
+	require.True(t, invite.IsRejectable(master.ID, master.ID))
+	require.True(t, invite.IsRejectable(user.ID, master.ID))
+	require.False(t, invite.IsRejectable("random", master.ID))
+
+	invite.Direction = ToUser
+
+	require.False(t, invite.IsAcceptable(master.ID, master.ID))
+	require.True(t, invite.IsAcceptable(user.ID, master.ID))
+	require.False(t, invite.IsAcceptable("random", master.ID))
+}
+
+func TestRoom_GetInvite(t *testing.T) {
+	invite := Invite{
+		ID:        InviteID(uuid.New().String()),
+		UserID:    UserID(uuid.New().String()),
+		Name:      "test",
+		Direction: FromUser,
+		CreatedAt: time.Now(),
+	}
+	room := Room{
+		Invites: []Invite{invite},
+	}
+
+	require.Equal(t, &invite, room.GetInvite(invite.ID))
+	require.Nil(t, room.GetInvite(InviteID(uuid.New().String())))
+}
+
 func TestInvite_Member(t *testing.T) {
 	invite := Invite{
 		ID:        InviteID(uuid.New().String()),

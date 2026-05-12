@@ -1,6 +1,7 @@
 package room_service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -13,7 +14,6 @@ import (
 )
 
 func TestService_OK(t *testing.T) {
-	ctx := t.Context()
 	uuids := make([]uuid.UUID, 0, 5)
 	now := time.Now()
 	uuidFactory := func() (uuid.UUID, error) {
@@ -30,7 +30,7 @@ func TestService_OK(t *testing.T) {
 		require.NotNil(t, r, "action returned nil room")
 		require.Equal(t, e, r, "action result mismatch")
 
-		r, err = repo.Get(ctx, r.ID)
+		r, err = repo.Get(t.Context(), r.ID)
 
 		require.NoError(t, err, "error retrieving room")
 		require.NotNil(t, r, "retrieved room is nil")
@@ -44,7 +44,9 @@ func TestService_OK(t *testing.T) {
 		return uuids[len(uuids)-1].String()
 	}
 
-	r, err := svc.CreateRoom(ctx, master, "Dungeon")
+	ctx := room.WithUserInContext(t.Context(), &master)
+
+	r, err := svc.CreateRoom(ctx, "Dungeon")
 	expected := &room.Room{
 		ID:           room.RoomID(lastID(t)),
 		MasterID:     "master",
@@ -73,12 +75,13 @@ func TestService_OK(t *testing.T) {
 			var joined bool
 			var dir room.InviteDirection
 			u := room.User{ID: room.UserID(tt.Name), Name: "test"}
+			userCtx := room.WithUserInContext(t.Context(), &u)
 
 			if tt.Send {
 				r, joined, err = svc.SendInvite(ctx, r.ID, u)
 				dir = room.ToUser
 			} else {
-				r, joined, err = svc.RequestRoomJoin(ctx, u, r.ID)
+				r, joined, err = svc.RequestRoomJoin(userCtx, r.ID)
 				dir = room.FromUser
 			}
 
@@ -95,7 +98,14 @@ func TestService_OK(t *testing.T) {
 			requireRoom(t, r, localExpected, err)
 
 			if tt.Accept {
-				r, err = svc.AcceptInvite(ctx, r.ID, room.InviteID(lastID(t)))
+				var acceptCtx context.Context
+				if tt.Send {
+					acceptCtx = userCtx
+				} else {
+					acceptCtx = ctx
+				}
+
+				r, err = svc.AcceptInvite(acceptCtx, r.ID, room.InviteID(lastID(t)))
 				localExpected.Members = append(localExpected.Members, u)
 			} else {
 				r, err = svc.RejectInvite(ctx, r.ID, room.InviteID(lastID(t)))
@@ -112,40 +122,57 @@ func TestService_OK(t *testing.T) {
 	t.Run("same master", func(t *testing.T) {
 		r, err = svc.ChangeMaster(ctx, r.ID, "master")
 
-		require.NoError(t, err, nil)
-		requireRoom(t, r, expected, err)
+		require.ErrorIs(t, err, room.ErrAlreadyMaster)
 	})
 }
 
 func TestService_UUIDErrors(t *testing.T) {
-	ctx := t.Context()
 	now := time.Now()
 	nowFunc := func() time.Time { return now }
 	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
 	master := room.User{ID: "master", Name: "Master"}
+	user := room.User{ID: "user", Name: "User"}
 	errUuidFactory := func() (u uuid.UUID, err error) {
 		err = require.ErrTest
 		return
 	}
+	ctx := room.WithUserInContext(t.Context(), &master)
+	userCtx := room.WithUserInContext(t.Context(), &user)
 
 	t.Run("CreateRoom", func(t *testing.T) {
 		svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(errUuidFactory))
 
-		_, err := svc.CreateRoom(ctx, master, "Dungeon")
+		_, err := svc.CreateRoom(ctx, "Dungeon")
 
 		require.ErrorIs(t, err, require.ErrTest)
 	})
 
 	t.Run("SendInvite", func(t *testing.T) {
 		svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
-		r, err := svc.CreateRoom(ctx, master, "Dungeon")
+		r, err := svc.CreateRoom(ctx, "Dungeon")
 
 		require.NoError(t, err)
 		require.NotNil(t, r)
 
 		svc = New(repo, WithNowFunc(nowFunc), WithUUIDFactory(errUuidFactory))
 
-		r, joined, err := svc.SendInvite(ctx, r.ID, room.User{ID: "user", Name: "User"})
+		r, joined, err := svc.SendInvite(ctx, r.ID, user)
+
+		require.ErrorIs(t, err, require.ErrTest)
+		require.False(t, joined)
+		require.Nil(t, r)
+	})
+
+	t.Run("RequestRoomJoin", func(t *testing.T) {
+		svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
+		r, err := svc.CreateRoom(ctx, "Dungeon")
+
+		require.NoError(t, err)
+		require.NotNil(t, r)
+
+		svc = New(repo, WithNowFunc(nowFunc), WithUUIDFactory(errUuidFactory))
+
+		r, joined, err := svc.RequestRoomJoin(userCtx, r.ID)
 
 		require.ErrorIs(t, err, require.ErrTest)
 		require.False(t, joined)
@@ -154,7 +181,6 @@ func TestService_UUIDErrors(t *testing.T) {
 }
 
 func TestService_RepoErrors(t *testing.T) {
-	ctx := t.Context()
 	now := time.Now()
 	nowFunc := func() time.Time { return now }
 	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
@@ -167,16 +193,18 @@ func TestService_RepoErrors(t *testing.T) {
 	}
 	repoError := errors.New("repo error")
 	lockError := errors.New("lock error")
+	ctx := room.WithUserInContext(t.Context(), &master)
+	userCtx := room.WithUserInContext(t.Context(), &user)
 
 	t.Run("CreateRoom", func(t *testing.T) {
 		t.Cleanup(clearErrors)
 		repo.Error = repoError
-		_, err := svc.CreateRoom(ctx, master, "Dungeon")
+		_, err := svc.CreateRoom(ctx, "Dungeon")
 
 		require.ErrorIs(t, err, repoError)
 	})
 
-	r, err := svc.CreateRoom(ctx, master, "Dungeon")
+	r, err := svc.CreateRoom(ctx, "Dungeon")
 
 	require.NoError(t, err)
 	require.NotNil(t, r)
@@ -203,7 +231,7 @@ func TestService_RepoErrors(t *testing.T) {
 	})
 
 	testMethod(t, "RequestRoomJoin", func() error {
-		_, _, err := svc.RequestRoomJoin(ctx, user, r.ID)
+		_, _, err := svc.RequestRoomJoin(userCtx, r.ID)
 		return err
 	})
 
@@ -214,7 +242,7 @@ func TestService_RepoErrors(t *testing.T) {
 	inv := r.Invites[0]
 
 	testMethod(t, "AcceptInvite", func() error {
-		_, err := svc.AcceptInvite(ctx, r.ID, inv.ID)
+		_, err := svc.AcceptInvite(userCtx, r.ID, inv.ID)
 		return err
 	})
 
@@ -223,7 +251,7 @@ func TestService_RepoErrors(t *testing.T) {
 		return err
 	})
 
-	r, err = svc.AcceptInvite(ctx, r.ID, inv.ID)
+	r, err = svc.AcceptInvite(userCtx, r.ID, inv.ID)
 
 	require.NoError(t, err)
 
@@ -247,13 +275,13 @@ func TestService_RepoErrors(t *testing.T) {
 }
 
 func TestService_NotFounds(t *testing.T) {
-	ctx := t.Context()
 	now := time.Now()
 	nowFunc := func() time.Time { return now }
 	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
 	master := room.User{ID: "master", Name: "Master"}
 	svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
-	r, err := svc.CreateRoom(ctx, master, "Dungeon")
+	ctx := room.WithUserInContext(t.Context(), &master)
+	r, err := svc.CreateRoom(ctx, "Dungeon")
 
 	require.NoError(t, err)
 	require.NotNil(t, r)
@@ -283,15 +311,58 @@ func TestService_NotFounds(t *testing.T) {
 	})
 }
 
+func TestService_NonMaster(t *testing.T) {
+	now := time.Now()
+	nowFunc := func() time.Time { return now }
+	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
+	master := room.User{ID: "master", Name: "Master"}
+	user := room.User{ID: "user", Name: "User"}
+	otherUser := room.User{ID: "other", Name: "Other"}
+	svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
+	ctx := room.WithUserInContext(t.Context(), &master)
+	userCtx := room.WithUserInContext(t.Context(), &user)
+	r, err := svc.CreateRoom(ctx, "Dungeon")
+
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	t.Run("DestroyRoom", func(t *testing.T) {
+		err := svc.DestroyRoom(userCtx, r.ID)
+		require.ErrorIs(t, err, room.ErrNotMaster)
+	})
+
+	t.Run("SendInvite", func(t *testing.T) {
+		r, joined, err := svc.SendInvite(userCtx, r.ID, user)
+
+		require.ErrorIs(t, err, room.ErrNotMaster)
+		require.False(t, joined)
+		require.Nil(t, r)
+	})
+
+	t.Run("RemoveUser", func(t *testing.T) {
+		r, err := svc.RemoveUser(userCtx, r.ID, otherUser.ID)
+
+		require.ErrorIs(t, err, room.ErrNotMaster)
+		require.Nil(t, r)
+	})
+
+	t.Run("ChangeMaster", func(t *testing.T) {
+		r, err := svc.ChangeMaster(userCtx, r.ID, otherUser.ID)
+
+		require.ErrorIs(t, err, room.ErrNotMaster)
+		require.Nil(t, r)
+	})
+}
+
 func TestService_DoubleInvite(t *testing.T) {
-	ctx := t.Context()
 	now := time.Now()
 	nowFunc := func() time.Time { return now }
 	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
 	master := room.User{ID: "master", Name: "Master"}
 	user := room.User{ID: "user", Name: "User"}
 	svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
-	r, err := svc.CreateRoom(ctx, master, "Dungeon")
+	ctx := room.WithUserInContext(t.Context(), &master)
+	r, err := svc.CreateRoom(ctx, "Dungeon")
 
 	require.NoError(t, err)
 	require.NotNil(t, r)
@@ -307,4 +378,75 @@ func TestService_DoubleInvite(t *testing.T) {
 	require.ErrorIs(t, err, room.ErrAlreadyInvited)
 	require.False(t, joined)
 	require.Nil(t, r)
+}
+
+func TestService_DoubleRequest(t *testing.T) {
+	now := time.Now()
+	nowFunc := func() time.Time { return now }
+	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
+	master := room.User{ID: "master", Name: "Master"}
+	user := room.User{ID: "user", Name: "User"}
+	svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
+	ctx := room.WithUserInContext(t.Context(), &master)
+	userCtx := room.WithUserInContext(t.Context(), &user)
+	r, err := svc.CreateRoom(ctx, "Dungeon")
+
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	r, joined, err := svc.RequestRoomJoin(userCtx, r.ID)
+
+	require.NoError(t, err)
+	require.False(t, joined)
+	require.NotNil(t, r)
+
+	r, joined, err = svc.RequestRoomJoin(userCtx, r.ID)
+
+	require.ErrorIs(t, err, room.ErrAlreadyInvited)
+	require.False(t, joined)
+	require.Nil(t, r)
+}
+
+func TestService_UnacceptableInvite(t *testing.T) {
+	now := time.Now()
+	nowFunc := func() time.Time { return now }
+	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
+	master := room.User{ID: "master", Name: "Master"}
+	user := room.User{ID: "user", Name: "User"}
+	svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
+	ctx := room.WithUserInContext(t.Context(), &master)
+	r, err := svc.CreateRoom(ctx, "Dungeon")
+
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	r, _, err = svc.SendInvite(ctx, r.ID, user)
+
+	require.NoError(t, err)
+	require.NotNil(t, r)
+
+	r, err = svc.AcceptInvite(ctx, r.ID, r.Invites[0].ID)
+
+	require.ErrorIs(t, err, room.ErrInviteNotAcceptable)
+	require.Nil(t, r)
+}
+
+func TestService_NoUser(t *testing.T) {
+	now := time.Now()
+	nowFunc := func() time.Time { return now }
+	repo := memory_room_repository.New(memory_room_repository.WithNowFunc(nowFunc))
+	svc := New(repo, WithNowFunc(nowFunc), WithUUIDFactory(uuid.NewUUID))
+	ctx := context.Background()
+
+	t.Run("CreateRoom", func(t *testing.T) {
+		_, err := svc.CreateRoom(ctx, "Dungeon")
+
+		require.ErrorIs(t, err, room.ErrNoUserInContext)
+	})
+
+	t.Run("userRoomAction", func(t *testing.T) {
+		err := svc.userRoomAction(ctx, "any", nil)
+
+		require.ErrorIs(t, err, room.ErrNoUserInContext)
+	})
 }

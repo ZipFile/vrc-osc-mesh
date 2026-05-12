@@ -13,6 +13,36 @@ func (i *Invite) IsJoinRequest() bool {
 	return i.Direction == FromUser
 }
 
+func (i *Invite) IsAcceptable(by, master UserID) bool {
+	switch {
+	case i == nil:
+		return false
+	case by == i.UserID:
+		return i.Direction == ToUser
+	case by == master:
+		return i.Direction == FromUser
+	default:
+		return false
+	}
+}
+
+func (i *Invite) IsRejectable(by, master UserID) bool {
+	if i == nil {
+		return false
+	}
+
+	return by == i.UserID || by == master
+}
+
+func (r *Room) GetInvite(id InviteID) *Invite {
+	for _, invite := range r.Invites {
+		if invite.ID == id {
+			return &invite
+		}
+	}
+	return nil
+}
+
 func (r *Room) AddInvite(inv Invite, now time.Time) (bool, error) {
 	if r.IsMember(inv.UserID) {
 		return false, ErrAlreadyMember

@@ -2,7 +2,6 @@ package room_service
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"github.com/ZipFile/vrc-osc-mesh/internal/room"
@@ -45,7 +44,13 @@ func New(repo room.Repository, options ...Option) *Service {
 	return s
 }
 
-func (s *Service) CreateRoom(ctx context.Context, master room.User, name string) (*room.Room, error) {
+func (s *Service) CreateRoom(ctx context.Context, name string) (*room.Room, error) {
+	user, err := room.UserFromContext(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
 	id, err := s.uuidFactory()
 
 	if err != nil {
@@ -54,7 +59,7 @@ func (s *Service) CreateRoom(ctx context.Context, master room.User, name string)
 
 	roomId := room.RoomID(id.String())
 	now := s.nowFunc()
-	r := master.NewRoom(roomId, name, now)
+	r := user.NewRoom(roomId, name, now)
 	err = s.repo.Add(ctx, *r)
 
 	if err != nil {
@@ -64,23 +69,18 @@ func (s *Service) CreateRoom(ctx context.Context, master room.User, name string)
 	return r, nil
 }
 
-func (s *Service) DestroyRoom(ctx context.Context, id room.RoomID) error {
-	return s.repo.Delete(ctx, id)
+func (s *Service) DestroyRoom(ctx context.Context, roomID room.RoomID) error {
+	return s.userRoomAction(ctx, roomID, func(ctx context.Context, u *room.User, r *room.Room) error {
+		if r.MasterID != u.ID {
+			return room.ErrNotMaster
+		}
+
+		return s.repo.Delete(ctx, r.ID)
+	})
 }
 
-func (s *Service) RequestRoomJoin(ctx context.Context, u room.User, roomID room.RoomID) (*room.Room, bool, error) {
-	return s.sendInvite(ctx, roomID, u, room.FromUser)
-}
-
-func (s *Service) SendInvite(ctx context.Context, roomID room.RoomID, u room.User) (*room.Room, bool, error) {
-	return s.sendInvite(ctx, roomID, u, room.ToUser)
-}
-
-func (s *Service) sendInvite(ctx context.Context, roomID room.RoomID, u room.User, dir room.InviteDirection) (*room.Room, bool, error) {
-	var out *room.Room
-	var joined bool
-
-	lockErr := s.repo.Lock(ctx, roomID, func(ctx context.Context, r *room.Room) error {
+func (s *Service) RequestRoomJoin(ctx context.Context, roomID room.RoomID) (out *room.Room, joined bool, actionErr error) {
+	actionErr = s.userRoomAction(ctx, roomID, func(ctx context.Context, u *room.User, r *room.Room) error {
 		now := s.nowFunc()
 		id, err := s.uuidFactory()
 
@@ -88,15 +88,7 @@ func (s *Service) sendInvite(ctx context.Context, roomID room.RoomID, u room.Use
 			return err
 		}
 
-		invID := room.InviteID(id.String())
-		var inv *room.Invite
-
-		if dir == room.FromUser {
-			inv = u.NewJoinRequest(invID, now)
-		} else {
-			inv = u.NewInvite(invID, now)
-		}
-
+		inv := u.NewJoinRequest(room.InviteID(id.String()), now)
 		joined, err = r.AddInvite(*inv, now)
 
 		if err != nil {
@@ -108,14 +100,24 @@ func (s *Service) sendInvite(ctx context.Context, roomID room.RoomID, u room.Use
 		return s.repo.Add(ctx, *r)
 	})
 
-	return out, joined, lockErr
+	return
 }
 
-func (s *Service) AcceptInvite(ctx context.Context, roomID room.RoomID, invID room.InviteID) (*room.Room, error) {
-	var out *room.Room
+func (s *Service) SendInvite(ctx context.Context, roomID room.RoomID, to room.User) (out *room.Room, joined bool, actionErr error) {
+	actionErr = s.userRoomAction(ctx, roomID, func(ctx context.Context, u *room.User, r *room.Room) error {
+		if r.MasterID != u.ID {
+			return room.ErrNotMaster
+		}
 
-	lockErr := s.repo.Lock(ctx, roomID, func(ctx context.Context, r *room.Room) error {
-		err := r.AcceptInvite(invID, s.nowFunc())
+		now := s.nowFunc()
+		id, err := s.uuidFactory()
+
+		if err != nil {
+			return err
+		}
+
+		inv := to.NewInvite(room.InviteID(id.String()), now)
+		joined, err = r.AddInvite(*inv, now)
 
 		if err != nil {
 			return err
@@ -126,31 +128,55 @@ func (s *Service) AcceptInvite(ctx context.Context, roomID room.RoomID, invID ro
 		return s.repo.Add(ctx, *r)
 	})
 
-	return out, lockErr
+	return
 }
 
-func (s *Service) RejectInvite(ctx context.Context, roomID room.RoomID, invID room.InviteID) (*room.Room, error) {
-	var out *room.Room
+func (s *Service) AcceptInvite(ctx context.Context, roomID room.RoomID, invID room.InviteID) (out *room.Room, actionErr error) {
+	actionErr = s.userRoomAction(ctx, roomID, func(ctx context.Context, u *room.User, r *room.Room) error {
+		inv := r.GetInvite(invID)
 
-	lockErr := s.repo.Lock(ctx, roomID, func(ctx context.Context, r *room.Room) error {
-		err := r.RemoveInvite(invID, s.nowFunc())
-
-		if err != nil {
-			return err
+		if inv == nil {
+			return room.ErrInviteNotFound
 		}
+
+		if !inv.IsAcceptable(u.ID, r.MasterID) {
+			return room.ErrInviteNotAcceptable
+		}
+
+		_ = r.AcceptInvite(invID, s.nowFunc())
 
 		out = r
 
 		return s.repo.Add(ctx, *r)
 	})
 
-	return out, lockErr
+	return
 }
 
-func (s *Service) RemoveUser(ctx context.Context, roomID room.RoomID, userID room.UserID) (*room.Room, error) {
-	var out *room.Room
+func (s *Service) RejectInvite(ctx context.Context, roomID room.RoomID, invID room.InviteID) (out *room.Room, actionErr error) {
+	actionErr = s.userRoomAction(ctx, roomID, func(ctx context.Context, u *room.User, r *room.Room) error {
+		inv := r.GetInvite(invID)
 
-	lockErr := s.repo.Lock(ctx, roomID, func(ctx context.Context, r *room.Room) error {
+		if !inv.IsRejectable(u.ID, r.MasterID) {
+			return room.ErrInviteNotFound
+		}
+
+		_ = r.RemoveInvite(invID, s.nowFunc())
+
+		out = r
+
+		return s.repo.Add(ctx, *r)
+	})
+
+	return
+}
+
+func (s *Service) RemoveUser(ctx context.Context, roomID room.RoomID, userID room.UserID) (out *room.Room, actionErr error) {
+	actionErr = s.userRoomAction(ctx, roomID, func(ctx context.Context, u *room.User, r *room.Room) error {
+		if !(r.MasterID == u.ID || userID == u.ID) {
+			return room.ErrNotMaster
+		}
+
 		err := r.RemoveMember(userID, s.nowFunc())
 
 		if err != nil {
@@ -162,28 +188,37 @@ func (s *Service) RemoveUser(ctx context.Context, roomID room.RoomID, userID roo
 		return s.repo.Add(ctx, *r)
 	})
 
-	return out, lockErr
+	return
 }
 
-func (s *Service) ChangeMaster(ctx context.Context, roomID room.RoomID, userID room.UserID) (*room.Room, error) {
-	var out *room.Room
+func (s *Service) ChangeMaster(ctx context.Context, roomID room.RoomID, userID room.UserID) (out *room.Room, actionErr error) {
+	actionErr = s.userRoomAction(ctx, roomID, func(ctx context.Context, u *room.User, r *room.Room) error {
+		if r.MasterID != u.ID {
+			return room.ErrNotMaster
+		}
 
-	lockErr := s.repo.Lock(ctx, roomID, func(ctx context.Context, r *room.Room) error {
 		err := r.ChangeMaster(userID, s.nowFunc())
 
-		if err == nil {
-			out = r
-		} else {
-			if errors.Is(err, room.ErrAlreadyMaster) {
-				out = r
-				return nil
-			}
-
+		if err != nil {
 			return err
 		}
+
+		out = r
 
 		return s.repo.Add(ctx, *r)
 	})
 
-	return out, lockErr
+	return
+}
+
+func (s *Service) userRoomAction(ctx context.Context, id room.RoomID, action func(ctx context.Context, u *room.User, r *room.Room) error) error {
+	u, err := room.UserFromContext(ctx)
+
+	if err != nil {
+		return err
+	}
+
+	return s.repo.Lock(ctx, id, func(ctx context.Context, r *room.Room) error {
+		return action(ctx, u, r)
+	})
 }
