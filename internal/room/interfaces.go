@@ -18,10 +18,13 @@ const (
 )
 
 var ErrNotFound = errors.New("not found")
-var ErrRoomNotFound = fmt.Errorf("room not found: %w", ErrNotFound)
-var ErrInviteNotFound = fmt.Errorf("invite not found: %w", ErrNotFound)
+var ErrRoomNotFound = fmt.Errorf("%w: room", ErrNotFound)
+var ErrInviteNotFound = fmt.Errorf("%w: invite", ErrNotFound)
+var ErrUserNotFound = fmt.Errorf("%w: user", ErrNotFound)
 var ErrAlreadyMember = errors.New("user is already a member of the room")
 var ErrAlreadyInvited = errors.New("user already invited to the room")
+var ErrAlreadyMaster = errors.New("user is already the master of the room")
+var ErrCannotRemoveMaster = errors.New("cannot remove master user from room")
 
 type User struct {
 	ID   UserID `json:"id"`

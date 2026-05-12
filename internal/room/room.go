@@ -5,20 +5,25 @@ import (
 	"time"
 )
 
-func (r *Room) ChangeMaster(id UserID, now time.Time) bool {
-	if r == nil || r.MasterID == id {
-		return false
+func (r *Room) ChangeMaster(id UserID, now time.Time) error {
+	if r == nil {
+		return ErrRoomNotFound
 	}
 
 	for _, member := range r.Members {
 		if member.ID == id {
+			if r.MasterID == id {
+				return ErrAlreadyMaster
+			}
+
 			r.LastActivity = now
 			r.MasterID = id
-			return true
+
+			return nil
 		}
 	}
 
-	return false
+	return ErrUserNotFound
 }
 
 func (r *Room) addMember(m User, now time.Time) {
@@ -30,7 +35,11 @@ func (r *Room) addMember(m User, now time.Time) {
 }
 
 func (r *Room) AddMember(m User, now time.Time) error {
-	if r.IsMember(m.ID) {
+	if r == nil {
+		return ErrRoomNotFound
+	}
+
+	if r.isMember(m.ID) {
 		return ErrAlreadyMember
 	}
 
@@ -40,24 +49,42 @@ func (r *Room) AddMember(m User, now time.Time) error {
 }
 
 func (r *Room) IsMember(id UserID) bool {
+	if r == nil {
+		return false
+	}
+
+	return r.isMember(id)
+}
+
+func (r *Room) isMember(id UserID) bool {
 	for _, member := range r.Members {
 		if member.ID == id {
 			return true
 		}
 	}
+
 	return false
 }
 
-func (r *Room) RemoveMember(id UserID, now time.Time) bool {
+func (r *Room) RemoveMember(id UserID, now time.Time) error {
+	if r == nil {
+		return ErrRoomNotFound
+	}
+
 	for i, member := range r.Members {
-		if member.ID == id && member.ID != r.MasterID {
+		if member.ID == id {
+			if r.MasterID == id {
+				return ErrCannotRemoveMaster
+			}
+
 			r.LastActivity = now
 			r.Members = slices.Delete(r.Members, i, i+1)
-			return true
+
+			return nil
 		}
 	}
 
-	return false
+	return ErrUserNotFound
 }
 
 func (r *Room) Copy() *Room {

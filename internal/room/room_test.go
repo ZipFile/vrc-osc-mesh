@@ -10,6 +10,20 @@ import (
 
 func TestRoom_MemberManagement(t *testing.T) {
 	now := time.Now()
+	member := User{ID: "test", Name: "test"}
+
+	t.Run("nil", func(t *testing.T) {
+		var r *Room
+		err := r.AddMember(member, now)
+
+		require.ErrorIs(t, err, ErrRoomNotFound)
+		require.False(t, r.IsMember(member.ID))
+
+		err = r.RemoveMember(member.ID, now)
+
+		require.ErrorIs(t, err, ErrRoomNotFound)
+	})
+
 	room := &Room{
 		ID:           RoomID(uuid.New().String()),
 		MasterID:     UserID("test"),
@@ -26,7 +40,6 @@ func TestRoom_MemberManagement(t *testing.T) {
 		Direction: FromUser,
 		CreatedAt: now,
 	}
-	member := User{ID: "test", Name: "test"}
 
 	joined, err := room.AddInvite(invite, now)
 
@@ -41,16 +54,22 @@ func TestRoom_MemberManagement(t *testing.T) {
 	require.False(t, room.IsInvited(member.ID))
 
 	t.Run("existing", func(t *testing.T) {
-		err := room.AddMember(member, now)
+		err = room.AddMember(member, now)
 
 		require.ErrorIs(t, err, ErrAlreadyMember)
 	})
 
 	t.Run("remove master", func(t *testing.T) {
-		ok := room.RemoveMember(member.ID, now)
+		err = room.RemoveMember(member.ID, now)
 
-		require.False(t, ok)
+		require.ErrorIs(t, err, ErrCannotRemoveMaster)
 		require.True(t, room.IsMember(member.ID))
+	})
+
+	t.Run("remove unknown", func(t *testing.T) {
+		err = room.RemoveMember("unknown", now)
+
+		require.ErrorIs(t, err, ErrUserNotFound)
 	})
 
 	t.Run("remove", func(t *testing.T) {
@@ -58,9 +77,9 @@ func TestRoom_MemberManagement(t *testing.T) {
 
 		require.NoError(t, err)
 
-		ok := room.RemoveMember("extra", now)
+		err = room.RemoveMember("extra", now)
 
-		require.True(t, ok)
+		require.Nil(t, err)
 		require.False(t, room.IsMember("extra"))
 	})
 }
@@ -100,15 +119,15 @@ func TestRoom_Copy(t *testing.T) {
 }
 
 func TestRoom_ChangeMaster(t *testing.T) {
-	var r *Room
-
 	t.Run("nil", func(t *testing.T) {
 		var r *Room
-		require.False(t, r.ChangeMaster(UserID("test"), time.Now()))
+		err := r.ChangeMaster("test", time.Now())
+
+		require.ErrorIs(t, err, ErrRoomNotFound)
 	})
 
 	now := time.Now()
-	r = &Room{
+	r := &Room{
 		ID:           RoomID(uuid.New().String()),
 		MasterID:     "test",
 		Name:         "test",
@@ -121,14 +140,20 @@ func TestRoom_ChangeMaster(t *testing.T) {
 	}
 
 	t.Run("master", func(t *testing.T) {
-		require.False(t, r.ChangeMaster("test", now))
+		err := r.ChangeMaster("test", now)
+
+		require.ErrorIs(t, err, ErrAlreadyMaster)
 	})
 
 	t.Run("member", func(t *testing.T) {
-		require.True(t, r.ChangeMaster("xxx", now))
+		err := r.ChangeMaster("xxx", now)
+
+		require.NoError(t, err)
 	})
 
 	t.Run("non member", func(t *testing.T) {
-		require.False(t, r.ChangeMaster("yyy", now))
+		err := r.ChangeMaster("yyy", now)
+
+		require.ErrorIs(t, err, ErrUserNotFound)
 	})
 }

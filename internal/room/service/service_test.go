@@ -108,6 +108,13 @@ func TestService_OK(t *testing.T) {
 			expected = localExpected
 		})
 	}
+
+	t.Run("same master", func(t *testing.T) {
+		r, err = svc.ChangeMaster(ctx, r.ID, "master")
+
+		require.NoError(t, err, nil)
+		requireRoom(t, r, expected, err)
+	})
 }
 
 func TestService_UUIDErrors(t *testing.T) {
@@ -254,7 +261,7 @@ func TestService_NotFounds(t *testing.T) {
 	t.Run("RemoveUser", func(t *testing.T) {
 		_, err = svc.RemoveUser(ctx, r.ID, "user")
 
-		require.NoError(t, err)
+		require.ErrorIs(t, err, room.ErrUserNotFound)
 	})
 
 	t.Run("RejectInvite", func(t *testing.T) {
@@ -272,7 +279,7 @@ func TestService_NotFounds(t *testing.T) {
 	t.Run("ChangeMaster", func(t *testing.T) {
 		_, err = svc.ChangeMaster(ctx, r.ID, "user")
 
-		require.NoError(t, err)
+		require.ErrorIs(t, err, room.ErrUserNotFound)
 	})
 }
 

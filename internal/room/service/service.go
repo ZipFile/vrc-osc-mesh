@@ -2,6 +2,7 @@ package room_service
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/ZipFile/vrc-osc-mesh/internal/room"
@@ -150,10 +151,10 @@ func (s *Service) RemoveUser(ctx context.Context, roomID room.RoomID, userID roo
 	var out *room.Room
 
 	lockErr := s.repo.Lock(ctx, roomID, func(ctx context.Context, r *room.Room) error {
-		removed := r.RemoveMember(userID, s.nowFunc())
+		err := r.RemoveMember(userID, s.nowFunc())
 
-		if !removed {
-			return nil
+		if err != nil {
+			return err
 		}
 
 		out = r
@@ -168,13 +169,18 @@ func (s *Service) ChangeMaster(ctx context.Context, roomID room.RoomID, userID r
 	var out *room.Room
 
 	lockErr := s.repo.Lock(ctx, roomID, func(ctx context.Context, r *room.Room) error {
-		changed := r.ChangeMaster(userID, s.nowFunc())
+		err := r.ChangeMaster(userID, s.nowFunc())
 
-		if !changed {
-			return nil
+		if err == nil {
+			out = r
+		} else {
+			if errors.Is(err, room.ErrAlreadyMaster) {
+				out = r
+				return nil
+			}
+
+			return err
 		}
-
-		out = r
 
 		return s.repo.Add(ctx, *r)
 	})
